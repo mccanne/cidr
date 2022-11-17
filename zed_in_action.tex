@@ -1,0 +1,109 @@
+\vspace{-0.6em}
+\section{Data Processing with \sys{}} \label{s:zed_in_action}
+
+Here we describe a \sys{}-based data-processing ecosystem, and how \sys{} overcomes the challenges of hybrid approaches (\S\ref{s:hybrid}).
+
+\vspace{-0.9em}
+\subsection{Data Generation and Ingestion with \sys{}}
+
+Data sources generate data in ZSON or ZNG. They define named types and typically generate many values with the same type. When a source wants to define a new type or redefine a named type, it simply starts writing data with that new type, as shown in Figure~\ref{f:iot_data}.
+
+When \sys{} data arrives at the storage layer,
+\sys{} can store it in any combination of ZSON, ZNG, or ZST, and can also build indexes over it. How the data is split across different formats may impact query performance but has no impact on the types of queries that can be issued, the way they are expressed in the query language, or what the results look like. In addition, \sys{} can easily transform data between formats at any time. \sys{} also enables transactional reads and writes to a \sys{} lake using a transaction log over \sys{} data, as in Delta Lake~\cite{delta_lake}; the \sys{} lake portion of \sys{} is currently an early-stage prototype.
+
+Compared to generating and ingesting data in the document model, using \sys{} is no more difficult. The key difference is that users may choose to define and use named types, which requires specifying a name for the type as well as all the field names and field types it contains. Typically this is not burdensome for data sources, because the data they generate corresponds to data structures that are already defined in memory; \sys{} enables them to convey this structure in their serialized data. Data sources may also forgo named types; in this case writing \sys{} data is very similar to writing JSON.
+
+Ingesting \sys{} data is much easier than ingesting data into relational or hybrid systems. Users might choose to transform data on ingest, but they are never required to predefine schemas or to clean data to conform to any particular structure before it can be stored.
+
+Users who are unable to modify their data sources to output data in one of \sys{}'s data formats can still benefit from \sys{}. \sys{}'s runtime can read in data from a variety of formats including NDJSON, CSV, and Parquet, enabling users to query this data using \sys{}'s query language and to convert it to \sys{}'s data formats. In addition, if users would like to {\em shape} their data into a specific set of data types, \sys{}'s type abstraction provides an opportunity to do this more easily than in existing systems; we leave an in-depth exploration of this shaping functionality to future work.
+
+%Users can use \sys{}'s support for introspection (\S\ref{ss:zed_in_action_types}) to view the types of data present in their dataset. Finally, \sys{}'s query language provides operators to help {\em shape} data 
+
+\begin{figure}
+    \begin{minted}[]{bash}
+{
+    time: 18:47:00 (time),
+    triggered: true (bool),
+    loc: {floor: 3 (int32), room: "robotics lab" (string)} (=location)
+} (=motion)
+{
+    time: 19:03:00 (time),
+    triggered: true (bool),
+    loc: {floor: 2 (int32), room: "kitchen" (string)} (=location)
+} (=motion)
+{
+    time: 19:04:00 (time),
+    volume: 9.5 (float32),
+    loc: {floor: 4 (int32), room: "media lab" (string)} (=location)
+} (=sound)
+    \end{minted}
+    \vspace{-1.3em}
+    \caption{Nested IoT data output by motion and sound sensors in different rooms, represented in ZSON.}
+    \label{f:iot_data_nested}
+    \vspace{-1.5em}
+\end{figure}
+
+\vspace{-0.9em}
+\subsection{Querying Data in \sys{}} \label{ss:zed_querying}
+
+All \sys{} data, regardless of the format that it is stored in, can benefit from both the document model's flexibility and the relational model's types. \sys{} supports queries that are typically issued over data in the document model today, because they involve mixing heterogeneous data. For example, \sys{} supports the query from Section~\ref{ss:hybrid_querying}, which sorts heterogeneously typed values by time and returns the first five. We can issue this query using the command-line tool \texttt{zq}:
+
+\texttt{zq "sort time | head 5" sensor\_data.zng}
+
+\noindent{}Figure~\ref{f:iot_data} shows example results for this query. \sys{} can also search data, for example performing a full-text search over the nested data shown in Figure~\ref{f:iot_data_nested}:
+
+\texttt{zq "search `lab'" nested\_sensor\_data.zng}
+
+\noindent{}This query searches all string fields in the heterogeneous data, including the nested \texttt{room} field, and returns the first and third records.
+
+\sys{} can also leverage types for efficient analytics, as is commonly done with relational data today. For example, we can use issue an analytics query over the data shown in Figure~\ref{f:iot_data_nested}, formatted in columnar ZST:
+
+\texttt{zq "count() by loc.floor" nested\_sensor\_data.zst}
+
+\noindent{}This query counts the number of occurrences of each floor in the nested \texttt{location} records.
+
+Though \sys{}'s formats can mix heterogeneous data, it's still possible to organize data separately by type, either within a file or by using multiple files. This enables all of the performance optimizations of existing relational systems, while providing the flexibility during ingestion and querying of document-based systems. Thus \sys{} subsumes both approaches at the same time.
+
+
+
+\begin{figure}
+    \begin{minted}[]{bash}
+$ zq -f table 'count() by typeof(this)' sensor_data.zng
+typeof                                           count
+<temperature={time:time,temp:int32}>             452
+<humidity={time:time,percent_humidity:float32}>  82
+<temperature={time:time,temp:int32,unit:string}> 239
+    \end{minted}
+    \vspace{-1.3em}
+    \caption{A data introspection query to count the number of records of each type in a ZNG file of IoT sensor data. \noteamy{fix this to use new proposal for unioning types instead of redefining them}}
+    \label{f:count_by_type}
+    \vspace{-1.5em}
+\end{figure}
+
+\vspace{-0.9em}
+\subsection{Data Introspection in \sys{}} \label{ss:zed_in_action_types}
+
+\sys{} enables two main forms of introspection. First, users can {\em query for types} to view what types are present in a dataset. Figure~\ref{f:count_by_type} shows an example of counting the number of values with each type in an IoT dataset and outputting the results in a tabular format (with \texttt{-f table}). Second, \sys{} supports {\em querying by type}. For example, querying for records with \texttt{typeof(this)==<humidity>} selects all records with type \texttt{humidity}, effectively extracting a relational \texttt{humidity} table out of a collection of heterogeneous records.
+This enables \sys{} to provide the same functionality as relational systems, and to select groups of records with related types for further transformations or querying.
+
+These data introspection operations seem quite simple, but are actually quite powerful, especially when applied to large datasets with hundreds of complex nested data types. Because all \sys{} data is typed, these operations work at any stage of processing---when data is generated, during ingestion, while stored, or during querying---thereby avoiding the catch-22 of existing relational and hybrid approaches. Because type information is encoded by data sources, the number of distinct types is much smaller than if you treated each combination of JSON fields as a distinct type, and more accurate than if you relied on schema inference. And finally, because types are first-class members of both the query language and data model, all of these introspection queries reuse the same query language and data model that are used by regular queries over data (\S\ref{ss:zed_querying}).
+
+Note that \sys{} does not eliminate the problem of data cleaning. As prior work has pointed out, a key part of data cleaning is resolving {\em semantic heterogeneity}, for example to determine if a \texttt{wages} field means the same thing in one dataset as another~\shortorlongform{\cite{what_goes_around, redbook}}{\cite{what_goes_around, redbook_integration}}. \sys{} still requires that users resolve such questions. However, \sys{}'s introspection capabilities can significantly ease data cleaning by providing visibility into the set of types present in a dataset. This enables users to focus on resolving the semantic heterogeneity between different types, rather than trying to infer which records correspond to the same type in the first place.
+
+
+%The results of these queries, even the results in Figure~\ref{f:count_by_type} which include types, are presented in the \sys{} data model, because it supports first-class types as well.
+
+
+\begin{comment}
+Finally, \sys{} eases {\em shaping} by enabling users to shape values by type rather than field-by-field. \sys{} supports operators such as:
+\begin{CompactItemize}
+\item \texttt{crop(val, t)}: outputs \texttt{val} but omits any extra fields of \texttt{val} that are not in type \texttt{t}
+\item \texttt{fill(val, t)}: outputs \texttt{val} but adds fields with a null value for all fields in type \texttt{t} that are not in \texttt{val}
+\item \texttt{order(val, t)}: outputs \texttt{val} but with its fields re-ordered to match the order of fields in type \texttt{t}
+\item \texttt{cast(val, t)}: outputs \texttt{val} but with the types of all its fields changed to match those of type \texttt{t}
+\end{CompactItemize}
+
+For example, suppose a user's temperature data is much more varied than what is shown in Figure~\ref{f:iot_data}, with many records containing 
+%shaping: \texttt{crop(this, <{time:time,temp:int32,unit:string}>)}
+\end{comment}
+

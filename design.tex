@@ -1,0 +1,198 @@
+\vspace{-0.8em}
+\section{The Design of \sys{}}
+
+\sys{}'s key goal is to provide {\em comprehensive yet flexible typing} throughout data processing. Achieving this goal allows \sys{} to unify the document and relational models 
+%(embodying the best features of both simultaneously) 
+and enable new functionality for data introspection. \sys{}'s key technique is a new {\em data type abstraction} that represents the structure of an individual data value; achieving comprehensive yet flexibly typing requires careful design of this abstraction. We now describe \sys{} types and how they impact \sys{}'s data model (\S\ref{ss:zed_data_model}), %runtime (\S\ref{ss:zed_type_contexts}),
+query language (\S\ref{ss:zed_query_language}), and formats  (\S\ref{ss:zed_formats}).
+
+%A type in \sys{} plays a similar role as a schema of a row in a relational database or the implied type of a single JSON document. 
+
+\begin{comment}
+Realizing this type abstraction requires answering several design questions, such as:
+\begin{CompactItemize}
+    \item Type definitions - what should a type definition specify?
+    \item Type evolution - how can we enable users to easily create new types on the fly?
+    \item Type scope - what is the scope of a type definition and how can we relate types across different scopes?
+    \item Querying types - how can we represent types in queries and in query results?
+\end{CompactItemize}
+
+In this section, we answer these questions by overviewing \sys{}'s super-structured data model (\S\ref{ss:zed_data_model}) and query language (\S\ref{ss:zed_query_language}). In addition, we observe that a single unified data model does not necessitate a single unified data format. As pointed out by prior work, no single format is best for all use cases~\cite{one_size_fits_all_2005, one_size_fits_all_2007}, and we describe how \sys{} supports multiple formats (human-readable, columnar binary, etc.) with lossless transformations between them (\S\ref{ss:zed_formats}). Finally, we explain how \sys{} manages type scope (\S\ref{ss:zed_type_contexts}).
+\end{comment}
+
+\vspace{-1em}
+\subsection{\sys{} Data Model} \label{ss:zed_data_model}
+
+\begin{comment}
+The \sys{} data model is guided by two key principles. First:
+
+{\bf P1:} {\em Every data value should have an explicit, queryable data type.}
+
+\noindent{}{\em Explicit} types are an essential property of the relational model. They enable efficient storage formats~\cite{parquet, orc, protobufs, avro, dremel} and faster parsing and querying than with JSON data, which is known to be difficult to parse efficiently~\cite{mison, sparser}. Types that are also {\em queryable} enable rich data introspection, queries by type, and shaping by type (\S\ref{ss:hybrid_schema}). At the same time:
+
+{\bf P2:} {\em We should be flexible about which data types are allowed to coexist in the same file, table, or query results.}
+
+\noindent{}This {\em flexibility} is essential to the document model and allows any data value with valid syntax to be appended to a file, regardless of what other data or data types are already present in that file. This makes it easy to accommodate heterogeneous and evolving data without predefining its schema.
+\end{comment}
+
+We first describe the \sys{} data model and then highlight some of the unconventional design decisions behind it.
+
+\subsubsection{Data Model}
+
+The \sys{} data model consists of an ordered sequence of typed data values. Each value's type is either a primitive type (int32, string, bool, type, etc.), a complex type (record, array, set, map, union, etc.), named type, or null type. Many of these types have analogs in other data models, and we describe the significance of some of them below. For example, consider \sys{} records. A record consists of an ordered set of named values called ``fields''. Field names are simply strings and field values can be any \sys{} value, with the types described above. This enables nested data, as a record can contain arrays, sets, other records, etc. A row in a relational table, a record in Avro, or a JSON document could each be represented using a single \sys{} record.
+
+For example, consider the following two records of IoT sensor data, represented in \sys{}'s text-based format, ZSON:
+
+\noindent{}\mintinline[fontsize=\inlinefontsize]{bash}{{time:09:01:00(time),temp:68(int32)}}
+
+\noindent{}\mintinline[fontsize=\inlinefontsize]{bash}{{time:10:12:00(time),percent_humidity:43.7(float32)}}
+
+\noindent{}The first record has type \texttt{\{time:time,temp:int32\}} while the second record has type \texttt{\{time:time, percent\_humidity:float32\}}.
+Despite having different types, these two records can be stored in the same file because data types in \sys{} are {\bf associated with individual data values}.
+
+%Thus, a sequence of \sys{} records can be used to represent either homogeneous data, as in a relational table or Parquet file, or heterogeneous data, as in the document model.
+
+Types are {\bf first-class members} of the \sys{} data model. This means that a type---even the type of a record---is a single entity, which can be represented as a \sys{} value whose type is type. As a result, a query for the type of a record returns the record's type in the same \sys{} data model, rather than a separate data model as in existing systems~\cite{aurum}. \sys{} also enables users to define {\em named types}, which bind a name to a type. For example, we can use the decorator \texttt{(=temperature)} to define a named \texttt{temperature} type:
+
+\noindent{}\mintinline[fontsize=\inlinefontsize]{bash}{{time:09:01:00(time),temp:68(int32)}(=temperature)}
+
+\noindent{}This allows users to refer to the type \texttt{\{time:time,temp:int32\}} using \texttt{<temperature>} in queries (\S\ref{ss:zed_query_language}). For example, a query can extract all records with type \texttt{<temperature>}, the equivalent of a single relational \texttt{temperature} table.
+%\sys{}'s binary data formats also leverage numeric type IDs for efficient encoding and querying (\S\ref{ss:zed_formats}).
+
+%For example, a query for the type of the first record in Figure~\ref{f:iot_data} returns \texttt{<temp\_schema=\{time:time,temp:int32\}>}, and this result is still represented in the \sys{} data model.
+
+Type definitions in \sys{} are stored {\bf inline} with the data. When a new type first appears in a \sys{} file,
+the type definition is stored inline at that point in the file. The \texttt{temperature} record above shows how \sys{} does this in its text-based format; we describe 
+how \sys{} efficiently encodes type definitions in its 
+binary formats in~\shortorlongform{\S\ref{ss:zed_formats}}{Section~\ref{ss:zed_formats}}. A consequence of inlined types is that type definitions are scoped to a file. However, when querying multiple files at once, \sys{} can efficiently determine if types defined in separate files correspond to the same type
+%(e.g., two files each define a type \texttt{\{a:int32,b:string\}})
+by comparing their type definitions, as described in Section~\ref{ss:zed_type_contexts}.
+
+Finally, each type in \sys{} specifies the {\bf complete} and potentially nested structure of data values with that type. Types that provide only partial type information such as \texttt{OBJECT}, \texttt{JSON}, or \texttt{any} are not supported. A record of type \texttt{T} can omit fields of \texttt{T} by explicitly setting them to \texttt{null}; this avoids an exponential explosion in the number of defined types when different records omit different combinations of fields. Types are ``closed,'' meaning that a record of type \texttt{T} never contains extra fields beyond those defined by \texttt{T}.
+
+Complete types may appear to be at odds with \sys{}'s goal of flexibility. For example, suppose a temperature sensor outputs \texttt{temperature} records with two fields at first, but then adds a third \texttt{unit} field~\shortorlongform{}{ to \texttt{temperature}} so that it can output data as either Fahrenheit or Celsius, as shown in Figure~\ref{f:iot_data}. Is this valid data, or will \sys{} throw an error? \noteamy{TODO: fix this paragraph once Zed supports unioning type definitions instead of redefining} This is in fact valid \sys{} data; line 4 changes the definition of the named \texttt{<temperature>} type to \texttt{\{time:time,temp:int32,unit:string\}} from this point in the file onward. This ability to change the binding between a name such as \texttt{temperature} and the type it refers to ensures that named types are always valid, and that arbitrary \sys{} data can be appended to a file regardless of what other named types already exist in it. This is crucial for providing complete flexibility.
+
+
+\begin{comment}
+\begin{figure}
+    \begin{minted}[]{bash}
+{city:"Augusta"(string),population:18662(uint32)}(=city_schema)
+{city:"Bangor"(string),population:32029(uint32)}(=city_schema)
+{city:"Bar Harbor"(string),population:5535(uint32)}(=city_schema)
+{city:"Bath"(string),state:"ME"(string),population:8333(uint32)} (=city_schema)
+{city:"Belfast"(string),state:"ME"(string),population: 6710(uint32)}(=city_schema)
+    \end{minted}
+    \vspace{-1em}
+    \caption{Example \sys{} data, represented in text-based ZSON.}
+    \label{f:city_data}
+\end{figure}
+\end{comment}
+
+\begin{figure}
+    \begin{minted}[]{bash}
+{time:09:01:00(time),temp:68(int32)}(=temperature)
+{time:10:12:00(time),percent_humidity:43.7(float32)}(=humidity)
+{time:17:29:00(time),temp:71(int32)}(=temperature)
+{time:17:45:00(time),temp:80(int32),unit:"F"(string)}(=temperature)
+{time:18:02:00(time),temp:28(int32),unit:"C"(string)}(=temperature)
+    \end{minted}
+    \vspace{-1.3em}
+    \caption{Example IoT data from temperature and humidity sensors, represented in text-based ZSON.\shortorlongform{}{\footnotemark}}
+    \label{f:iot_data}
+    \vspace{-1.5em}
+\end{figure}
+\shortorlongform{}{\footnotetext{The \texttt{time} type in \sys{} represents nanoseconds from epoch. For simplicity, we abbreviate time values in the example \sys{} data shown in this paper.}}
+
+
+\subsubsection{Design Decisions} 
+
+\sys{} differs from existing data models in how it relates types to data values. In relational databases or Parquet files, a type is defined for an entire table or file and all records it contains share the same type. This achieves comprehensive types but not flexibility. In contrast, in the document model, each record is self describing and has its own implied type, and there is no way to specify that multiple records have the same type. This achieves flexibility but not comprehensive typing. By decoupling the type assignment from the data's organization into files, \sys{} can achieve comprehensive types and flexibility simultaneously.
+
+Some existing approaches define types in schema registries, resulting in globally scoped types; a type defined in a registry may be used by any program in that administrative domain~\cite{confluent_schema_registry}. However, globally scoped types are at odds with  flexibility, because ensuring compliance with a schema registry may restrict what kinds of data users can write. Scoping named types locally to a file and inlining their type definitions gives data producers complete freedom to define arbitrary new types on the fly and ensures that data consumers always have the required type information to decode data.
+
+\sys{} also takes an unconventional approach regarding what a type definition specifies. Some existing data models flexibly accommodate eclectic data by supporting partial types such as \texttt{JSON} or \texttt{OBJECT}\shortorlongform{~\cite{snowflake}}{~\cite{snowflake, json_type_postgres, json_type_mysql}}, or by allowing ``open'' data types, where a record may contain extra fields beyond those specified by its type's type definition~\cite{asterixdb, json_schema, xml_schema}. However, incomplete type information makes it challenging to leverage efficient formats such as columnar~\cite{snowflake} and makes the results of queries about types less useful. We also observe that union types can handle cases where a single field might reasonably assume one of a few different types (e.g., an ID field that can be an int or string), and heterogeneity of type structure can be accommodated by making it easy to define new types. As a result, \sys{} takes a different approach based on complete types.
+
+Finally, while prior work has explored expressing relation names within data~\shortorlongform{\cite{fisql_2005, relation_names, schemasql}}{\cite{fisql_2005, fisql_2007, relation_names, schemasql}}, we are aware of no existing data model that can express an entire schema or type as a single value within data.
+
+\subsection{\sys{} Query Language} \label{ss:zed_query_language}
+
+The \sys{} query language aims to support the same core functionalities as existing query languages for relational and document data, and to also provide new functionality by exposing type information to users so that they can query by and for types. \sys{} supports both of these---querying data and querying types---within the same language. We will briefly sketch \sys{}'s query language here; a complete description is beyond the scope of this paper.
+
+The \sys{} language borrows heavily from existing query languages such as SQL, jq, and Lorel~\shortorlongform{\cite{lorel}}{\cite{lorel, lore_xml}}, as well as traditional UNIX shells. Similar to jq and Lorel, the \sys{} language can issue queries across heterogeneous data values and tolerate missing fields. For example, a query for \texttt{avg(temp)} over the data in Figure~\ref{f:iot_data} will quietly skip the non-matching \texttt{humidity} record and return the average of the \texttt{temp} fields in the other four records. The Zed language also supports many standard SQL operators such as \texttt{join} and \texttt{where}, as well as common UNIX commands such as \texttt{head} and \texttt{sort}.
+
+The key novelty of the \sys{} language is that it takes well-known features of existing programming languages---type introspection and first-class types---and applies them to a query language. {\em Type introspection} is the ability to obtain the type of an individual data value. Python supports type introspection with a \texttt{type} function, and \sys{} enables it with a \texttt{typeof()} operator. This is a necessary building block to enable rich queries about types, and is feasible to implement because the \sys{} data model associates a type with every individual data value, even records. For example, a query for the type of the first record in Figure~\ref{f:iot_data} returns \texttt{<temperature=\{time:time}, \texttt{temp:int32\}>}.
+%For example, issuing the query \texttt{typeof(this)} over the data \texttt{\{city: ``Broad Cove'' (string), population: 806 (uint32)\} (=city\_schema)} returns \texttt{<temp\_schema=\{time:time,temp:int32\}>}.
+In contrast, existing query languages do not enable full type introspection. The \texttt{type} operator in jq, \texttt{TYPE} in N1QL~\cite{n1ql}, and \texttt{typeof} in JavaScript return strings such as \shortorlongform{``number''}{``number'' or ``boolean''} instead of a dedicated type type, and they do not capture the complete structure of complex types, simply returning ``object'' when issued over a JSON-version of each of the records in Figure~\ref{f:iot_data}.
+
+%Unlike the \texttt{<temperature>} type above, the string ``object'' does not help users determine how to query or transform their data.
+
+\shortorlongform{Programming languages have leveraged {\em first-class types} since the 1960s.}{Programming languages have leveraged {\em first-class types} since the 1960s~\cite{fundamental}, and there is some debate over exactly what properties are required in order for an element to be considered ``first class'' in a programming language.} Here we highlight three key first-class properties\shortorlongform{}{~\cite{pop2}} that types have in the \sys{} language:
+\begin{CompactItemize}
+    \item Types can be returned from functions: \texttt{typeof()} returns a type
+    \item Types can be tested for equality: \texttt{typeof(this)==<temperature>}\footnote{The identifier \texttt{this} refers to input data values one-by-one, so a query for values with \texttt{typeof(this)==<temperature>} returns all \texttt{<temperature>} records.}
+    \item Types can be assigned to a variable: \newline{} \texttt{type temperature=\{time:time,temp:int32\}}
+\end{CompactItemize}
+These first-class types enable \sys{} to support rich data introspection, as we will show in Section~\ref{ss:zed_in_action_types}.
+
+\begin{table}[t]
+\begin{center}
+\small
+ \begin{tabularx}{\columnwidth}{|p{2.6cm}|X|}
+\hline
+Operators & \texttt{cut}, \texttt{drop}, \texttt{head}, \texttt{join}, \texttt{put}, \texttt{rename}, \texttt{search}, \texttt{sort}, \texttt{tail}, \texttt{uniq}, \texttt{where} \\
+\hline
+Functions & \texttt{abs}, {\bf\texttt{cast}}, \texttt{ceil}, \texttt{floor}, {\bf \texttt{is}}, \texttt{log}, \texttt{lower}, {\bf \texttt{nameof}}, \texttt{sqrt}, {\bf \texttt{typeof}}, {\bf \texttt{typeunder}}, \texttt{upper}\\
+\hline
+Aggregation Functions & \texttt{and}, \texttt{any}, \texttt{avg}, \texttt{count}, \texttt{max}, \texttt{min}, \texttt{or}, \texttt{sum} \\
+\hline
+ \end{tabularx}
+\end{center}
+\caption{Some of the operators and functions in the \sys{} query language. Bolded functions use types or type names as an input or output.}
+\label{t:query_language}
+\vspace{-1em}
+\end{table}
+% typename is another example, but this refers the named type for a string, which is a bit confusing to explain
+
+The \sys{} query language is inspired by the pipeline pattern of traditional UNIX shells; it operates over a sequence of \sys{} values that can be piped from one operator to the next. Table~\ref{t:query_language} shows examples of the different components of the \sys{} query language. Operators take in and output a sequence of \sys{} values, functions take in and output a single \sys{} value, and aggregation functions take in a sequence of input values and output an aggregated value.
+
+Many \sys{} functions leverage type information. The function \texttt{is} tests if a value is of a specified type (e.g., \texttt{is(<temperature>)}). The \texttt{nameof} function returns the string name of a value's type. The \texttt{typeunder} function returns the underlying type of a value, capturing its structure but omitting name information for named types (e.g., \texttt{typeunder} of the first record in Figure~\ref{f:iot_data} is \texttt{<{time:time,} \texttt{temp:int32}>}). Note that \sys{} allows queries to refer to types either with their name (using the \texttt{nameof} and \texttt{typeof} functions), or by their structure (using the \texttt{typeunder} function). This is useful for disambiguating between values that have the same type name but different structures (or vice versa), as with the different \texttt{<temperature>} types shown in Figure~\ref{f:iot_data}.
+
+%These first-class types provide two main benefits in \sys{}. First, first-class types enable \sys{} to provide the same functionality as relational systems, by extracting all data records with a given type. For example, selecting all records with \texttt{typeof(this)==<temperature>} effectively extracts a relational \texttt{temperature} table out of a collection of heterogeneous records. Second, first-class types enable \sys{} to support rich introspection and shaping, as we will show (\S\ref{s:zed_in_action}). \noteamy{maybe move this whole paragraph (after listing the properties) to the section with Zed examples, \S\ref{s:zed_in_action}}
+
+
+\subsection{\sys{} Format Family} \label{ss:zed_formats}
+
+Prior work has shown that no single format is best for all use cases~\shortorlongform{\cite{one_size_fits_all_2005}}{\cite{one_size_fits_all_2005, one_size_fits_all_2007}}. Thus, \sys{} provides a family of three data formats: a text-based format and two binary formats. \sys{} also supports indexes over its binary formats. Data can be converted between these formats with no loss of information or human involvement because all three implement the \sys{} data model, including its comprehensive typing and ordering of values and fields. This is similar to converting between row-based and columnar relational data~\cite{h2o, peloton} and contrasts with converting between the document and relational models.
+
+A key challenge in designing \sys{}'s data formats is encoding type definitions in a space-efficient way. In \sys{}'s text-based format ZSON, complete type information is encoded inline with each individual value, as shown in Figure~\ref{f:iot_data}. Thus a ZSON file will be larger than a JSON file containing the same data. In contrast, \sys{}'s binary formats only encode each type definition once per file. When a new data type first appears in a file, it is assigned a numeric ID and both the ID and type definition are encoded in the file. All subsequent values with the same type are encoded with the numeric type ID, rather than the complete type definition. As a result, the amount of space required for type definitions in a binary \sys{} file scales linearly with the number of types rather than the number of records. Briefly, \sys{}'s formats are:
+
+\para{ZSON:} ZSON is a text-based format, similar to JSON but with support for types, as shown in Figure~\ref{f:iot_data}.
+
+\para{ZNG:} ZNG is a binary row-based format, similar to Avro~\cite{avro} but with support for heterogeneous values within the same file. ZNG interleaves encoded values and encoded type definitions. Each type definition binds the next available numeric type ID to a specific user-defined type. Values are encoded by first encoding the type ID. Then the value itself is encoded using a tag-encoding approach which consists of a tag specifying the value's length and then the value itself, similar to Protocol Buffers~\cite{protobufs}. This encoding enables \texttt{null} values to be encoded efficiently. For example, each \texttt{null} field in a record is encoded in a single byte. While formats like JSON are challenging to parse efficiently~\shortorlongform{\cite{mison}}{\cite{mison, sparser}}, ZNG can be parsed quickly because each value's type and length are completely specified by its encoding. This enables a parser to skip records or parts of records whose fields are not relevant to a query.
+
+\noteamy{adjust ZST to new name!}
+
+\para{ZST:} ZST is a binary columnar format which generalizes existing columnar formats~\shortorlongform{\cite{parquet, dremel}}{\cite{parquet, dremel, orc}} by enabling heterogeneous values to coexist in the same file. Each ZST file includes a data section, a reassembly section, and a trailer. The {\em data section} encodes columns of data, where each is a column of primitive-type values corresponding to values for one field of one type of record (e.g., all the \texttt{unit} values in Figure~\ref{f:iot_data}). The {\em reassembly section} encodes the type ID of each value and the type definitions for all types in the file. It also describes where to find the columns of data for each type in the data section. The {\em trailer} includes the size of each section and additional metadata. All three sections are encoded using ZNG, contrasting with Parquet which relies on an additional format (Thrift) for encoding type definitions and other metadata.
+
+
+%\begin{comment}
+\subsection{\sys{} Type Contexts} \label{ss:zed_type_contexts}
+
+Locally scoped types raise a new challenge: how can \sys{} efficiently relate types across different scopes? This is necessary when a user queries multiple files simultaneously or refers to types within a query. In these cases, \sys{} must be able to determine if each type in one scope matches a type defined in another scope. Relational systems typically only compare two schemas at once, e.g., to determine if two tables can be \texttt{UNION}ed. In contrast, \sys{} must determine if each value in one scope matches any type defined in another scope, a potentially quadratic number of comparisons.
+
+For example, suppose a user wants to combine two \sys{} files into a single file. With text-based ZSON, simply concatenating the files is sufficient. However, naive concatenation of two binary \sys{} files may result in two different numeric type IDs for the same type (one from each original file), causing queries and storage formats to fail to recognize that the two types are the same.
+
+\sys{} addresses this challenge using {\em type contexts}. A type context represents the set of types that are defined at a given point in a query's execution. As the \sys{} runtime parses a file, it builds up a representation of the type context in memory, caching a mapping from each type definition to its numeric ID and vice versa.
+
+Type contexts enable \sys{} to efficiently merge types across different scopes. When the runtime parses data from an additional scope (e.g., a second file), for each value it encounters, it checks the existing type context to see if that value's type \texttt{T} is already defined. If so, the runtime adjusts the type ID of the value to be the existing type ID for \texttt{T}. If \texttt{T} is not yet defined, the runtime creates a new type definition with the next available type ID, adds it to the type context, and similarly adjusts the type ID of the value. Note that in either case, adjusting the type ID for a value does not require parsing or re-encoding the value itself. Because each type context lookup takes constant time, merging type contexts in this way takes time linear in the number of data values. Once the merge is complete, values with a given type will be assigned the same ID throughout the stream of data.
+
+
+\begin{comment}
+\subsection{\sys{} Type Contexts} \label{ss:zed_type_contexts}
+
+Locally scoped types raise a new challenge: how can \sys{} efficiently relate types across different scopes? For example, suppose a user wants to combine two \sys{} files into a single file. With text-based ZSON, simply concatenating the files is sufficient. However, naive concatenation of two binary \sys{} files may result in two different numeric type IDs for the same type (one from each original file), causing queries and storage formats to fail to recognize that the two types are the same. For example, the type \texttt{\{a:int32,b:string\}} may have been assigned ID 6 in the first file and 7 in the second.
+
+\sys{} must relate types across different scopes whenever a user queries multiple files simultaneously or refers to types within a query. Relational systems typically only compare two schemas at once, e.g., to determine if two tables can be \texttt{UNION}ed. In contrast, \sys{} must determine if each value in scope B matches any type defined in scope A, a potentially quadratic number of comparisons.
+
+\sys{} addresses this challenge using {\em type contexts}. A type context represents the set of types that are defined at a given point in a sequence of \sys{} values. As the \sys{} runtime parses a file, it builds up a representation of the type context in memory, caching a mapping from each type definition to its numeric ID and vice versa. As the runtime parses data in a second scope, for each value it encounters with type \texttt{T}, it checks the existing type context to see if \texttt{T} is already defined. For example, the runtime may discover that \texttt{\{a:int32,b:string\}} has already been assigned a type ID of 6 and then re-encode the value with the type ID of 6, instead of its original 7. If \texttt{T} is not yet defined in the type context, the runtime creates a new type definition with the next available type ID. This ensures that a given type is assigned the same ID throughout a file. Because each type context lookup takes constant time, merging type contexts takes time linear in the number of data values.
+\end{comment}

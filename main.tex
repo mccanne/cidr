@@ -1,0 +1,98 @@
+\documentclass[sigconf]{acmart}
+
+% remove copyright stuff for submission
+\settopmatter{printacmref=false} % Removes citation information below abstract
+\renewcommand\footnotetextcopyrightpermission[1]{} % removes footnote with conference information in first column
+\pagestyle{plain} % removes running headers
+
+\usepackage{comment}
+\usepackage{tabularx}
+\usepackage{pifont}
+\usepackage{outlines}
+\usepackage{graphicx}
+\usepackage{minted}
+\setminted{fontsize=\footnotesize,
+breaklines}
+\usepackage{caption}
+\usepackage{subcaption}
+\newcommand{\currentfontsize}{\fontsize{\f@size}{\f@baselineskip}\selectfont}
+\setmintedinline{fontsize=\currentfontsize}
+
+
+
+% minted: don't show red boxes around syntax errors in code
+\AtBeginEnvironment{minted}{%
+  \renewcommand{\fcolorbox}[4][]{#4}}
+
+\usepackage[boxed,linesnumbered]{algorithm2e}
+\SetAlFnt{\small}
+
+\newcommand{\para}[1]{\smallskip\noindent{\bf #1}}
+\newcommand{\allnotes}[1]{} 
+\renewcommand{\allnotes}[1]{\textit{#1}}
+\newcommand{\noteamy}[1]{\allnotes{\textcolor{violet}{[Amy: #1]}}}
+\newcommand{\notesf}[1]{\allnotes{\textcolor{teal}{[SF: #1]}}}
+\newcommand{\sr}[1]{\allnotes{\textcolor{blue}{[SR: #1]}}}
+\newcommand{\notessm}[1]{\allnotes{\textcolor{red}{[SM: #1]}}}
+
+\newcommand{\missing}[1]{\textcolor{purple}{#1}}
+
+\newcommand{\sys}{Zed}
+\newcommand{\zng}{ZNG}
+\newcommand{\zst}{ZST}
+\newcommand{\zson}{ZSON}
+
+\newcommand{\tinydag}{\textsuperscript{\dag}}
+\newcommand{\tinystar}{\textsuperscript{$\star$}}
+\newcommand{\tinydiamond}{\textsuperscript{$\diamond$}}
+
+% Compact itemize and enumerate.
+\usepackage{enumitem}
+\newenvironment{CompactItemize}
+  {\begin{itemize}[noitemsep,topsep=0pt,leftmargin=*]}
+  {\end{itemize}}
+\newenvironment{CompactEnumerate}
+  {\begin{enumerate}[noitemsep,topsep=0pt,leftmargin=*]}
+  {\end{enumerate}}
+
+\newcommand{\checkmark}{\textcolor{black}{\ding{51}}}
+\newcommand{\xmark}{\textcolor{red}{\ding{55}}}
+\newcommand{\nosupport}{\textcolor{black}{\ding{55}}}
+%\usepackage[geometry]{ifsym}
+%\newcommand{\optional}{\textcolor{black}{\Circle}}
+%\newcommand{\optional}{\textcolor{black}{\ding{109}}}
+\newcommand{\optional}{\textcolor{black}{\ding{55}}}
+
+% macro for removing non-essential content in submission. used mostly
+% for citations because references count towards the page limit.
+% short form goes first, uncomment the second line to use long form
+\newcommand{\shortorlongform}[2]{#1}
+\renewcommand{\shortorlongform}[2]{#2}
+
+\newcommand{\inlinefontsize}{\normalsize}
+
+\begin{document}
+
+\title{\sys{}: Leveraging Data Types to Process Eclectic Data}
+\author{Amy Ousterhout\tinydag, Steve McCanne\tinystar, Henri Dubois-Ferrier\tinydiamond, \\Silvery Fu\tinydag, Sylvia Ratnasamy\tinydag, Noah Treuhaft\tinystar}
+\affiliation{\institution{UC Berkeley\tinydag \quad \quad Brim Data\tinystar \quad \quad 12\textsuperscript{th} Ave Labs\tinydiamond}}
+
+\input{abstract}
+
+\maketitle
+\pagestyle{plain}
+
+\input{intro-v2}
+\input{challenges}
+\input{design}
+\input{zed_in_action}
+\input{future}
+\input{conclusion}
+\input{acks}
+
+
+\bibliographystyle{abbrv}
+\bibliography{references}
+
+\end{document}
+``  

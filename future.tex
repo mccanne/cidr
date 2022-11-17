@@ -1,0 +1,26 @@
+\section{Status and Research Questions} \label{s:questions}
+
+We are in the midst of building out the \sys{} architecture. It currently consists of 120K lines of code (LOC) including the \sys{} system and extensive tests. The majority of the code is written in Go. Our codebase includes the query language definition, compiler, and command line tool \texttt{zq} (73K LOC), the formats ZNG, ZST, ZSON, and indexes (12K LOC), and code for reading and writing data in \sys{}'s formats and in other formats such as Parquet, NDJSON, and CSV (12K LOC). \sys{} is available open source at \url{https://github.com/brimdata/zed}. Multiple companies actively use \sys{} at small scale, for example to analyze heterogeneous network logs or to ingest data from legacy servers that use heterogeneous data formats.
+
+% overall: cloc zed --include-lang=Go,JavaScript,YAML,Python,make
+% query language/compiler: cloc zed/compiler zed/runtime zed/cmd
+% formats: cloc zed/index zed/zst zed/zson zed/*.go
+% io: cloc zed/zio
+% queried on: 11/11/22
+
+Several research questions must be answered in order to realize the full benefits of \sys{}:
+
+\para{How can \sys{} optimize query performance?} Unlike existing databases and data-processing systems that leverage the relational model, \sys{} has not yet benefited from extensive engineering effort to optimize query performance. Nonetheless, when querying homogeneous data, \sys{} should be able to leverage many of the same techniques that enable high performance when querying existing relational databases and data-processing systems such as Spark~\cite{spark}, because \sys{} has comprehensive type information for all data values. In contrast, \sys{} raises new questions about how to optimize query performance over {\em heterogeneous but typed} data. What are the fundamental overheads of querying heterogeneous data compared to homogeneous data? What techniques can \sys{} employ---either in its data formats or query engine---to leverage type information to reduce the overheads of querying heterogeneous data?
+
+\para{What type-based operators and functions should \sys{} support to ease data introspection, shaping, and cleaning?} Exposing type information in a query language opens up new opportunities for easing the processing of eclectic data. Because existing systems lack a holistic data type abstraction, introspection, shaping, and cleaning rules are typically specified on a column-by-column basis today~\cite{bidel, codel}. For example, to \texttt{UNION} relational tables \texttt{A} and \texttt{B}, a user must first ensure that their schemas match by identifying each column that differs between \texttt{A} and \texttt{B} and individually dropping or adding columns or casting their types. Instead, \sys{}'s data types enable a \texttt{shape} operator that abstracts away all this column-by-column logic, automatically identifying any differences in the two types and adding, removing, and casting columns as necessary so that the two types match:
+
+\texttt{zq "shape(this, <B>)" data\_A.zng}
+
+\noindent{}This is one example of how a function can leverage type information to ease data shaping, but more exploration is necessary to develop a complete language for introspection, shaping, and cleaning.
+
+\para{How should type information be leveraged in a complete \sys{} data-processing system?} In the simplest \sys{} deployment, all ingested data is written as either ZNG or ZST and users directly query this data. However, there are opportunities to improve upon this model. For example, \sys{} could cache type information such as the set of types and their frequencies so that data introspection queries could avoid scanning all the data. In addition, \sys{} could extend existing work that decides which data format to leverage for each individual query~\cite{octopusdb, h2o,peloton,tidb,one_size_fits_all_2007} with policies that incorporate type information.
+
+
+%Many aspects of \sys{} are under active development including: a scale-out design for distributing query processing across many servers; a lakehouse~\cite{lakehouse} similar to DeltaLake~\cite{delta_lake} to support transactions atop \sys{}'s data formats; a complete set of operators in the query language for easing data introspection and data transformations; an optimized query engine, and format optimizations such as compression in ZST.
+
+%how can we optimize query performance over typed but heterogeneous data; what query language operators are most useful for exploring data types and transforming typed data; and how should we build a complete \sys{} data-processing system, including caching of type information, expressing type policies, etc.?

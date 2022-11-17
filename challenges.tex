@@ -1,0 +1,61 @@
+%\vspace{-1em}
+
+\section{The Limitations of Hybrid} \label{s:hybrid}
+
+As pointed out by prior work, the relational model's rigid schemas and the document model's lack of schemas each create significant challenges for users~\cite{snowflake, lorel, asterixdb, what_goes_around}. {\em Hybrid} approaches have emerged in response, attempting to combine the two models to achieve the best of both.\shortorlongform{}{\footnote{Note that when we refer to ``hybrid systems,'' we refer to the subset of ``multi-model systems''~\cite{multi_model} that relates to the relational and document data models.}} There are many such hybrid systems, including research approaches~\cite{asterixdb, sql++, bigdawg, dbms+} and industry examples~\cite{postgres, snowflake, lakehouse, delta_lake, partiql}. These approaches can simplify multi-model deployments, but no consensus has emerged regarding which is best, and each still faces significant challenges.
+
+In this section, we illustrate the limitations of hybrid systems during ingestion (\S\ref{ss:hybrid_ingestion}), querying (\S\ref{ss:hybrid_querying}), and data introspection (\S\ref{ss:hybrid_schema}). For the sake of concreteness, we focus on three specific systems; other hybrid systems often face similar limitations.
+Figure~\ref{f:hybrid_approaches} shows the three example systems and configurations.
+
+\para{AsterixDB~\cite{asterixdb}.} AsterixDB's data model is a superset of JSON that also includes a schema language. It supports both ``open Datasets'' of heterogeneous document-model data and relational-like ``closed Datasets'' of homogeneous data. All data can be queried with AsterixDB's AQL or with SQL++~\cite{sql++}. In our example configuration, data with known schema is validated and stored in ``closed Datasets'' while the rest is stored in ``open Datasets''.
+
+\para{Snowflake~\cite{snowflake}.} Snowflake extends traditional relational data warehouses with support for semi-structured data. This is done primarily via columns of type \texttt{OBJECT} that can store JSON documents, as well as corresponding extensions to SQL.\footnote{MySQL\shortorlongform{}{~\cite{json_type_mysql}} and PostgreSQL\shortorlongform{}{~\cite{json_type_postgres}} offer similar functionality with a \texttt{JSON} type.} In our configuration, all data is stored in Snowflake tables, with the heterogeneous, nested, and dynamic portions stored in such columns of JSON.
+
+\para{Lakehouse with ETL~\cite{delta_lake, lakehouse}.} Lakehouses store all data (whether raw or processed) in a data lake and query it using SQL or dedicated libraries. In our configuration, all incoming data is stored directly in the lake and ETL is used to clean a subset of the data into Parquet files~\cite{parquet} for efficient analytics.\footnote{Parquet's data model is the relational model, extended to support nested data.}
+
+\vspace{-0.7em}
+\subsection{Data Ingestion} \label{ss:hybrid_ingestion}
+
+Data sources today often generate data in a schemaless format such as JSON~\cite{json}. Users choose JSON over alternatives such as Avro~\cite{avro} or Protocol Buffers~\cite{protobufs} because it enables heterogeneous data to coexist in a file and it avoids the upfront complexity of defining and agreeing on schemas. When JSON data arrives at a storage layer for ingestion, hybrid approaches face two main challenges.
+
+\para{Cleaning data into the relational model.} In order for data to fully benefit from schemas (for data introspection and efficient queries and storage), it must be converted from JSON into the relational model. The challenges of this are well-known: data must be matched to and validated against the relevant schema and any non-conforming data must be cleaned or dropped\shortorlongform{}{~\cite{databricks_json_data_ingest}}. Automated approaches to this such as Fivetran\shortorlongform{}{~\cite{fivetran}} or Informatica\shortorlongform{}{~\cite{informatica}} can be error-prone and brittle in the face of changing schemas.
+%, and they encapsulate ingestion complexity rather than eliminating it.
+This problem first arose with purely relational systems, and because hybrid systems store some data in the relational model, they suffer from it as well.
+
+\para{Which model for which data?} Users of hybrid systems face the challenge of deciding which data model to use for which parts of their data. Users of AsterixDB must decide which Datatypes are stable enough to be able to leverage closed Datasets; users of Snowflake must decide which fields of their data are eclectic enough to warrant \texttt{JSON} columns and when data is different enough to warrant a separate table altogether; and users of Lakehouses must decide which data to ETL into Parquet. These decisions impact how users will be able to query their data (\S\ref{ss:hybrid_querying}), and
+%how efficient those query executions will be. Furthermore,
+if users want to convert data between models later, they may encounter the challenges and delays of cleaning their data, as described above.
+
+\vspace{-0.8em}
+\subsection{Querying Data} \label{ss:hybrid_querying}
+
+Different data models provide different benefits during querying. However, in hybrid approaches, most data is only stored in one model or the other; this is the case for all data in our AsterixDB and Snowflake configurations, and the JSON data that isn't ETLed into Parquet in the Lakehouse. This data can typically only benefit from the properties of the data model that it is stored in.
+
+For example, the relational model's schemas enable introspection queries that explore what kinds of data are present~\cite{aurum} and high-performance querying over efficient formats~\cite{snowflake, parquet, dremel, cstore}. For data stored only in the document model, these benefits are not available.
+%This applies to data stored in open Datasets in AsterixDB, JSON columns in Snowflake, or JSON in the Lakehouse.
+A rich body of literature attempts to infer schemas over this kind of data\shortorlongform{~\cite{parametric_schema_inference, schema_management, adaptive, liu2016closing, snowflake, asterixdb_compaction}}{~\cite{parametric_schema_inference, discala2016automatic, schema_management, bex2006inference, adaptive, liu2016closing, deriving_rdf_schema, snowflake, asterixdb_compaction, drill, baazizi2017counting, schema_inference_json, liu2015management}} but these heuristics can be inaccurate.\footnote{Schema inference over data in property graphs or RDF faces similar challenges~\cite{deriving_rdf_schema, neo4j}.} For example, human intervention may be necessary to determine whether two values have the same or different schemas in document-model data in AsterixDB or the Lakehouse.
+
+On the other hand, the document model enables queries that can flexibly mix heterogeneous data~\cite{lorel, asterixdb}. For example, consider a query to sort all data by time and return the five earliest records, effectively: \texttt{SELECT * FROM * ORDER BY time LIMIT 5}. This query is straightforward to issue over JSON data, even if the data and results span multiple schemas. However, to issue this query over relational data, the user must first combine heterogeneous tables into a wide ``uber table'' whose ``uber schema'' contains the union of all columns spanned by the data. The results for this query are then presented as a very wide table, bloated with many \texttt{null} values. Notably, AsterixDB does not suffer from this problem. Even though data in a closed Dataset is by definition homogeneous, AsterixDB's data model is a superset of JSON, and AsterixDB query results can mix heterogeneous data, similar to JSON. In contrast, issuing this query across Snowflake tables with differing relational columns will trigger the same problem as in purely relational systems.
+
+%If the user issues this query over the JSON data, they can sort the logs and return the first 5, but will have no notion of the schema of each. If the user attempts to issue this query over the Parquet data, they must first combine the heterogeneous logs into a wide table whose ``uber schema'' contains the union of all columns spanned by the logs. However, this ``uber table'' lacks information about the original schema of each log, preventing the analyst from obtaining the schemas of the first 5 logs. This query cannot be issued in existing systems today---even hybrid systems---because displaying the results requires both schema information and the ability to mix heterogeneous records, which are not possible within a single existing data model.
+
+\vspace{-1em}
+
+\subsection{Data Introspection} \label{ss:hybrid_schema}
+
+With the rise of eclectic data, users are increasingly interested in {\em data introspection}. Users want to query data {\em for its schema}, for example to enumerate the schemas spanned by a dataset and how many records have each. Users also want to query data {\em by its schema} to select a subset of data with particular schemas for further exploration. 
+%for example to extract the equivalent of a relational table out of a stream of heterogeneous data.
+%and {\em shaping} enables users to transform data from one schema to another.
+Users may want to perform these tasks at any stage of processing: during ingestion, on stored data, or over query results.
+
+The relational model does enable some forms of data introspection. For example, users can query \texttt{INFORMATION\_SCHEMA} to list tables and their column names and types, or query external systems like Aurum~\cite{aurum}.
+%To shape relational data, users can use statements like \texttt{ALTER TABLE} or systems such as PRISM~\cite{prism}, CoDEL~\cite{codel}, or BiDEL~\cite{bidel}.
+However, the relational model and query languages for it lack support for referring to schemas holistically. Some query languages such as N1QL enable users to query by or for field types (e.g., with \texttt{ISSTRING()} or \texttt{TYPE()} functions), but these only work for primitive types and return ``object'' or ``json'' for more complex data~\cite{sqlite, n1ql, mongo}. As a result, the relational model does not support queries by schema, because it can neither mix heterogeneous data together nor refer to schemas in queries. Introspection in the document model is even more challenging, because it lacks explicit schemas. In addition, inferring the schema of data or which data has the same schema can be inaccurate and brittle (\S\ref{ss:hybrid_querying}).
+
+%In addition, introspection and shaping must be performed field-by-field; there is no way to express the entire schema of a table as a single value in query results or to succinctly express shaping rules such as ``drop all columns from table A that are not present in table B.''\footnote{Note that some prior work enables queries or query results to refer to table names or database names~\cite{relation_names, fisql_2005, fisql_2007, schemasql}, but not an entire schema.}
+
+%Finally, languages developed for hybrid systems can query data in both the document and relational models, but do not make it any easier to manipulate data by its schema. For example, neither the query languages supported by AsterixDB (AQL~\cite{asterixdb} and SQL++~\cite{sql++}) nor Snowflake's SQL extensions~\cite{snowflake} provide a holistic way to refer to schemas in queries or in query results.
+
+Unfortunately, this puts users in a catch-22. In order to clean their data into the relational model, users need to first understand what kinds of data are present, but the limited tools for introspection that are available today are only available for data in the relational model. In short, it is difficult for users to introspect or clean their data until {\em after} it has already been cleaned into a pre-defined set of schemas. Furthermore, query languages for hybrid systems~\cite{asterixdb, sql++, snowflake, partiql}
+%(e.g., AQL~\cite{asterixdb}, SQL++~\cite{sql++}, or Snowflake's SQL extensions~\cite{snowflake}) 
+do not avoid this catch-22 because they do not provide a holistic way to refer to schemas in queries or in query results.
