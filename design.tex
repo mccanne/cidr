@@ -173,7 +173,15 @@ A key challenge in designing \sys{}'s data formats is encoding type definitions 
 
 XXX talk about canonical type serialization , e.g., a total order is defined on the type systems so that the types comprising a union have only possible definition.  contrasts with Parquet and Arrow, which don't share this property for the schema definitions, i.e., multiple schemas can define an equivalent type.
 
-Locally scoped types raise a new challenge: how can \sys{} efficiently relate types across different scopes? This is necessary when a user queries multiple files simultaneously or refers to types within a query. In these cases, \sys{} must be able to determine if each type in one scope matches a type defined in another scope. Relational systems typically only compare two schemas at once, e.g., to determine if two tables can be \texttt{UNION}ed. In contrast, \sys{} must determine if each value in one scope matches any type defined in another scope, a potentially quadratic number of comparisons.
+As described above, Zed data 
+
+Locally scoped types raise a new challenge: how can \sys{} efficiently represent and comingle types when different value sequences are merged or otherwise processed together?
+
+As described above, a sequence of \sys{} values embeds type definitions for all the types encoutered in that sequence.  The state that describes the types encountered is built up dynamically and is referred to as the {\em type context}.  The type context binds the set of types in use with a reference to each such type (e.g., a small-integer type ID) so that each typed value in a sequence can be efficiently serialized by simplye prefixing its type reference.
+
+When data values carry their complete type information, values are idempontent and can be trivially mixed together but carrying the type in every value can be inefficient.  But when types are defined inline then referenced by later values, as described above with ZNG, then different data sequences end up defining references that are incompatible.
+
+This is necessary when a user queries multiple files simultaneously or refers to types within a query. In these cases, \sys{} must be able to determine if each type in one scope matches a type defined in another scope. Relational systems typically only compare two schemas at once, e.g., to determine if two tables can be \texttt{UNION}ed. In contrast, \sys{} must determine if each value in one scope matches any type defined in another scope, a potentially quadratic number of comparisons.
 
 For example, suppose a user wants to combine two \sys{} files into a single file. With text-based ZSON, simply concatenating the files is sufficient. However, naive concatenation of two binary \sys{} files may result in two different numeric type IDs for the same type (one from each original file), causing queries and storage formats to fail to recognize that the two types are the same.
 
