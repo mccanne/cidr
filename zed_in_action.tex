@@ -63,9 +63,9 @@ All \sys{} data, regardless of the format that it is stored in, can benefit from
 
 \noindent{}This query searches all string fields in the heterogeneous data, including the nested \texttt{room} field, and returns the first and third records.
 
-\sys{} can also leverage types for efficient analytics, as is commonly done with relational data today. For example, we can use issue an analytics query over the data shown in Figure~\ref{f:iot_data_nested}, formatted in columnar ZST:
+\sys{} can also leverage types for efficient analytics, as is commonly done with relational data today. For example, we can use issue an analytics query over the data shown in Figure~\ref{f:iot_data_nested}, formatted in columnar VNG:
 
-\texttt{zq "count() by loc.floor" nested\_sensor\_data.zst}
+\texttt{zq "count() by loc.floor" nested\_sensor\_data.vng}
 
 \noindent{}This query counts the number of occurrences of each floor in the nested \texttt{location} records.
 
